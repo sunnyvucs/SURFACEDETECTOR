@@ -1,0 +1,229 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Surface Detector - Admin</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin:0; padding:0; display:flex; height:100vh; }
+    #left { width:340px; border-right:1px solid #ddd; padding:10px; overflow:auto; box-sizing:border-box; }
+    #right { flex:1; padding:10px; box-sizing:border-box; }
+    .device { padding:8px; border-bottom:1px solid #eee; cursor:pointer; }
+    .device:hover { background:#fafafa; }
+    .selected { background:#eef5ff; }
+    #charts { display:flex; gap:10px; flex-wrap:wrap; }
+    canvas { background:#fff; border:1px solid #eee; }
+    #three { width:480px; height:320px; border:1px solid #eee; }
+    #controls { margin-top:8px; }
+    .small { font-size:12px; color:#555; }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h3>Devices</h3>
+    <div id="devices"></div>
+  </div>
+  <div id="right">
+    <h3>Live View</h3>
+    <div id="selectedInfo">No device selected</div>
+    <div id="controls" class="small"></div>
+    <div id="charts">
+      <canvas id="chartX" width="480" height="120"></canvas>
+      <canvas id="chartY" width="480" height="120"></canvas>
+      <canvas id="chartZ" width="480" height="120"></canvas>
+    </div>
+    <h4>3D Motion</h4>
+    <div id="three"></div>
+    <h4>GPS / IP</h4>
+    <div id="mapinfo">-</div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
+
+  <script>
+    const socket = io({ query: { role: 'admin' }, transports: ['websocket'] });
+    const devicesEl = document.getElementById('devices');
+    const selectedInfo = document.getElementById('selectedInfo');
+    const mapinfo = document.getElementById('mapinfo');
+    const controls = document.getElementById('controls');
+
+    let devices = [];
+    let selectedDeviceId = null;
+    const bufferSize = 300;
+    const buffers = {}; // deviceId => { t:[], x:[], y:[], z:[] }
+
+    function ensureBuffers(id) {
+      if (!buffers[id]) buffers[id] = { t: [], x: [], y: [], z: [] };
+      return buffers[id];
+    }
+
+    function renderDeviceList() {
+      devicesEl.innerHTML = '';
+      devices.forEach(d => {
+        const div = document.createElement('div');
+        div.className = 'device' + (d.deviceId === selectedDeviceId ? ' selected' : '');
+        div.innerHTML = `<strong>${d.deviceId}</strong><div class="small">${d.ip || '-'} | last:${d.lastSeen ? new Date(d.lastSeen).toLocaleTimeString() : '-'}</div>
+                         <div class="small">lat:${d.lat||'-'} lon:${d.lon||'-'}</div>`;
+        div.onclick = () => selectDevice(d.deviceId);
+        devicesEl.appendChild(div);
+      });
+    }
+
+    // Chart.js setup
+    let chartX, chartY, chartZ;
+    function initCharts() {
+        const ctxX = document.getElementById('chartX').getContext('2d');
+        const ctxY = document.getElementById('chartY').getContext('2d');
+        const ctxZ = document.getElementById('chartZ').getContext('2d');
+
+        if (chartX) { chartX.destroy(); chartY.destroy(); chartZ.destroy(); }
+
+        const commonOptions = {
+        animation: false,
+        responsive: false,
+        maintainAspectRatio: false,
+        scales: {
+            x: {
+            ticks: {
+                autoSkip: true,
+                maxTicksLimit: 20   // show ~20 labels evenly spaced
+            },
+            grid: {
+                drawOnChartArea: true
+            }
+            },
+            y: {
+            min: -100,
+            max: 100,
+            ticks: {
+                stepSize: 10   // 👈 grid/labels every 10 units
+            },
+            grid: {
+                drawOnChartArea: true
+            }
+            }
+        }
+    };
+
+
+        chartX = new Chart(ctxX, { type:'line', data:{ labels:[], datasets:[{ label:'X', data:[] }] }, options: commonOptions });
+        chartY = new Chart(ctxY, { type:'line', data:{ labels:[], datasets:[{ label:'Y', data:[] }] }, options: commonOptions });
+        chartZ = new Chart(ctxZ, { type:'line', data:{ labels:[], datasets:[{ label:'Z', data:[] }] }, options: commonOptions });
+    }
+
+    initCharts();
+
+    // Three.js 3D point
+    let scene, camera, renderer, point;
+    function initThree() {
+      const container = document.getElementById('three');
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.innerHTML = '';
+      container.appendChild(renderer.domElement);
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
+      camera.position.set(0, -150, 150);
+      camera.lookAt(0,0,0);
+
+      const grid = new THREE.GridHelper(200, 20);
+      scene.add(grid);
+
+      const geom = new THREE.SphereGeometry(3, 12, 12);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff5722 });
+      point = new THREE.Mesh(geom, mat);
+      scene.add(point);
+
+      animate();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (renderer && scene && camera) renderer.render(scene, camera);
+    }
+
+    initThree();
+
+    function updateThree(x,y,z) {
+      // scale and clamp for visualization
+      const sx = Math.max(Math.min(x * 10, 90), -90);
+      const sy = Math.max(Math.min(y * 10, 90), -90);
+      // z usually ~9.8 gravity; center it
+      const sz = Math.max(Math.min((z - 9.8) * 10, 90), -90);
+      point.position.set(sx, sy, sz);
+    }
+
+    socket.on('connect', () => {
+      console.log('connected admin');
+    });
+
+    socket.on('devices', (list) => {
+      devices = list;
+      renderDeviceList();
+    });
+
+    socket.on('sensor-data', (pkt) => {
+      // pkt: { deviceId, time, x,y,z,lat,lon,ip }
+      const id = pkt.deviceId;
+      const b = ensureBuffers(id);
+      b.t.push(new Date(pkt.time).toLocaleTimeString());
+      b.x.push(pkt.x);
+      b.y.push(pkt.y);
+      b.z.push(pkt.z);
+      if (b.t.length > bufferSize) { b.t.shift(); b.x.shift(); b.y.shift(); b.z.shift(); }
+
+      // update devices data if present
+      const dd = devices.find(d => d.deviceId === id);
+      if (dd) {
+        dd.lastSeen = new Date().toISOString();
+        dd.lat = pkt.lat;
+        dd.lon = pkt.lon;
+        dd.ip = pkt.ip || dd.ip;
+      } else {
+        // if new device, add minimal info
+        devices.push({ deviceId: id, ip: pkt.ip, lastSeen: new Date().toISOString(), lat: pkt.lat, lon: pkt.lon });
+      }
+      renderDeviceList();
+
+      if (selectedDeviceId === id) {
+        // update charts
+        chartX.data.labels = b.t;
+        chartX.data.datasets[0].data = b.x;
+        chartX.update('none');
+
+        chartY.data.labels = b.t;
+        chartY.data.datasets[0].data = b.y;
+        chartY.update('none');
+
+        chartZ.data.labels = b.t;
+        chartZ.data.datasets[0].data = b.z;
+        chartZ.update('none');
+
+        updateThree(pkt.x, pkt.y, pkt.z);
+        mapinfo.innerText = `Device: ${id} | IP: ${pkt.ip || '-'} | lat:${pkt.lat || '-'} lon:${pkt.lon || '-'}`;
+      }
+    });
+
+    function selectDevice(id) {
+      selectedDeviceId = id;
+      selectedInfo.innerText = `Selected: ${id}`;
+      ensureBuffers(id);
+      initCharts(); // reset chart object references
+      // prefill chart with any buffer data
+      const b = buffers[id] || { t:[], x:[], y:[], z:[] };
+      chartX.data.labels = b.t; chartX.data.datasets[0].data = b.x; chartX.update();
+      chartY.data.labels = b.t; chartY.data.datasets[0].data = b.y; chartY.update();
+      chartZ.data.labels = b.t; chartZ.data.datasets[0].data = b.z; chartZ.update();
+
+      // show export link
+      const dev = devices.find(d => d.deviceId === id) || {};
+      const ip = dev.ip || '-';
+      const today = new Date().toISOString().slice(0,10);
+      controls.innerHTML = `<a href="/export/${encodeURIComponent(id)}?date=${encodeURIComponent(today)}" target="_blank">Export CSV (today)</a> &nbsp; IP: ${ip}`;
+      renderDeviceList();
+    }
+  </script>
+</body>
+</html>

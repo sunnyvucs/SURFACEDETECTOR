@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Surface Detector - Mobile</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align:center; padding:12px; }
+    #stage { width:260px; height:260px; margin: 20px auto; border-radius:50%; background:#f5f5f5; position:relative; border:2px solid #ddd }
+    #dot { width:18px; height:18px; border-radius:50%; background:#ff5722; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
+    #controls { margin-top:12px }
+    button { padding:10px 14px; margin:6px }
+    #info { margin-top:8px; color:#333 }
+  </style>
+</head>
+<body>
+  <h2>Surface Detector (Mobile)</h2>
+  <div id="stage"><div id="dot"></div></div>
+  <div id="info">Not connected</div>
+  <div id="controls">
+    <button id="btnStart">Start</button>
+    <button id="btnStop">Stop</button>
+  </div>
+
+  <!-- Socket.IO client (served by server) -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const info = document.getElementById('info');
+    const dot = document.getElementById('dot');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+
+    // deviceId persistence
+    let deviceId = localStorage.getItem('sd_deviceId') || null;
+
+    // connect socket (same origin, secure)
+    const socket = io({ query: { role: 'device' }, transports: ['websocket'] });
+
+    socket.on('connect', () => {
+      info.innerText = 'Connected to server';
+      socket.emit('register', { deviceId });
+    });
+
+    socket.on('registered', (data) => {
+      deviceId = data.deviceId;
+      localStorage.setItem('sd_deviceId', deviceId);
+      info.innerText = `Registered: ${deviceId}`;
+    });
+
+    socket.on('disconnect', () => {
+      info.innerText = 'Disconnected from server';
+    });
+
+    // sensor capture
+    let sending = false;
+    let latest = { x:0, y:0, z:0, lat:null, lon:null, time: new Date().toISOString() };
+    let watchId = null;
+    let motionHandlerRef = null;
+    let intervalRef = null;
+
+    function startStreaming() {
+      if (sending) return;
+      sending = true;
+
+      // geolocation watch
+      if (navigator.geolocation) {
+        watchId = navigator.geolocation.watchPosition((pos) => {
+          latest.lat = pos.coords.latitude;
+          latest.lon = pos.coords.longitude;
+        }, (err) => {
+          console.warn('geo err', err);
+        }, { enableHighAccuracy: true, maximumAge: 1000 });
+      }
+
+      function motionHandler(e) {
+        const a = e.acceleration || e.accelerationIncludingGravity || { x:0,y:0,z:0 };
+        latest.x = a.x || 0;
+        latest.y = a.y || 0;
+        latest.z = a.z || 0;
+        latest.time = new Date().toISOString();
+
+        // update dot position (map x,y into stage)
+        const rx = Math.max(Math.min(latest.x * 10, 100), -100);
+        const ry = Math.max(Math.min(latest.y * 10, 100), -100);
+        dot.style.transform = `translate(calc(-50% + ${rx}px), calc(-50% + ${ry}px))`;
+      }
+
+      // iOS permission flow
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        // need user gesture; Start button triggers this
+        DeviceMotionEvent.requestPermission().then(response => {
+          if (response === 'granted') {
+            window.addEventListener('devicemotion', motionHandler);
+            motionHandlerRef = motionHandler;
+          } else {
+            alert('Motion permission denied');
+            sending = false;
+          }
+        }).catch(err => {
+          console.warn('motion permission err', err);
+        });
+      } else {
+        window.addEventListener('devicemotion', motionHandler);
+        motionHandlerRef = motionHandler;
+      }
+
+      // emit at ~25Hz
+      intervalRef = setInterval(() => {
+        if (!sending) return;
+        const payload = {
+          deviceId,
+          time: latest.time,
+          x: latest.x || 0,
+          y: latest.y || 0,
+          z: latest.z || 0,
+          lat: latest.lat,
+          lon: latest.lon
+        };
+        socket.emit('sensor-data', payload);
+      }, 40);
+
+      info.innerText = `Streaming... (deviceId=${deviceId || 'pending'})`;
+    }
+
+    function stopStreaming() {
+      sending = false;
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+      if (motionHandlerRef) window.removeEventListener('devicemotion', motionHandlerRef);
+      if (intervalRef) clearInterval(intervalRef);
+      info.innerText = 'Stopped';
+    }
+
+    btnStart.addEventListener('click', startStreaming);
+    btnStop.addEventListener('click', stopStreaming);
+  </script>
+</body>
+</html>
