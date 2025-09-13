@@ -354,10 +354,10 @@ const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ---------------- GOOGLE DRIVE SETUP ----------------
-const DRIVE_FOLDER_ID = process.env.GDRIVE_FOLDER_ID; // Folder ID in Google Drive
+const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID; // Folder ID in Google Drive
 let SERVICE_ACCOUNT_JSON = null;
 try {
-  SERVICE_ACCOUNT_JSON = JSON.parse(process.env.GDRIVE_CREDENTIALS);
+  SERVICE_ACCOUNT_JSON = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 } catch (err) {
   console.error('❌ Invalid GDRIVE_CREDENTIALS JSON', err.message);
 }
@@ -562,3 +562,4 @@ httpServer.listen(PORT, () => {
   console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
   console.log(`Place your client pages at ${PUBLIC_DIR}/mobile.html and admin.html`);
 });
+
