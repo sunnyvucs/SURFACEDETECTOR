@@ -333,7 +333,6 @@
 //   console.log(`Place your client pages at ${PUBLIC_DIR}/mobile.html and admin.html`);
 // });
 
-
 // server/server.js
 const http = require('http');
 const path = require('path');
@@ -359,7 +358,7 @@ let SERVICE_ACCOUNT_JSON = null;
 try {
   SERVICE_ACCOUNT_JSON = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 } catch (err) {
-  console.error('❌ Invalid GDRIVE_CREDENTIALS JSON', err.message);
+  console.error('❌ Invalid GOOGLE_SERVICE_ACCOUNT JSON', err.message);
 }
 
 const auth = new google.auth.GoogleAuth({
@@ -385,7 +384,7 @@ async function uploadToDrive(filePath, fileName) {
       });
       console.log(`♻️ Updated on Drive: ${fileName}`);
     } else {
-      // Create new file
+      // Create new file in the shared folder
       const res = await drive.files.create({
         requestBody: {
           name: fileName,
@@ -394,13 +393,17 @@ async function uploadToDrive(filePath, fileName) {
         media: {
           mimeType: 'text/csv',
           body: fs.createReadStream(filePath)
-        }
+        },
+        supportsAllDrives: true
       });
       driveFileCache.set(fileName, res.data.id);
       console.log(`✅ Uploaded new file to Drive: ${fileName}`);
     }
   } catch (err) {
     console.error('❌ Drive upload error:', err.message);
+    if (err.message.includes('storage quota')) {
+      console.error('⚠️ Make sure the target folder is shared with the service account email and owned by your main account or a Shared Drive.');
+    }
   }
 }
 
@@ -562,4 +565,3 @@ httpServer.listen(PORT, () => {
   console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
   console.log(`Place your client pages at ${PUBLIC_DIR}/mobile.html and admin.html`);
 });
-
