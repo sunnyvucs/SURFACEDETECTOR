@@ -23,3 +23,36 @@ A real-time device monitoring and surface detection server built with Node.js, E
 
 ## Project Structure
 
+SURFACEDETECTOR/
+├── server/
+│   ├── server.js        ← Express + Socket.IO backend (HTTPS)
+│   ├── package.json
+│   ├── certs/           ← SSL cert/key (not committed)
+│   └── data/            ← Per-device CSV logs (auto-created)
+└── public/
+├── admin.html       ← Admin monitoring dashboard
+└── mobile.html      ← Mobile device client
+
+
+## Setup
+
+```bash
+cd server
+npm install
+
+# Generate self-signed SSL cert (required for HTTPS + camera/geolocation on mobile)
+openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes
+
+npm start
+# Server runs on https://localhost:8443
+
+
+
+API Endpoints
+Method	Route	Description
+GET	/devices	List all connected devices
+GET	/export/:deviceId?date=YYYY-MM-DD	Download CSV log for a device
+Built as a learning project exploring real-time IoT communication, WebSockets, and HTTPS on local networks.
+
+
+---
